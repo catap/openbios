@@ -272,8 +272,9 @@ handle_calls(prom_args_t *pb)
 		return 0;
 	}
 
-	/* Store catch result */
-	pb->args[pb->nargs] = val;
+	/* Store catch result if the client provided room for it */
+	if (pb->nret)
+		pb->args[pb->nargs] = val;
 	
 	j = dstackcnt;
 	for (i = 1; i < pb->nret; i++, j--) {
