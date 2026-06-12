@@ -44,6 +44,18 @@ static ucell get_ram_size( void )
 	return ofmem->ramsize;
 }
 
+static phys_addr_t get_claim_phys_top( void )
+{
+	phys_addr_t top = get_ram_size();
+
+#ifdef CONFIG_SPARC64
+	if (top > (phys_addr_t)0x100000000ULL)
+		top = (phys_addr_t)0x100000000ULL;
+#endif
+
+	return top;
+}
+
 /************************************************************************/
 /* debug                                                                */
 /************************************************************************/
@@ -521,7 +533,7 @@ phys_addr_t ofmem_claim_phys( phys_addr_t phys, ucell size, ucell align )
                 " align=" FMT_ucellx "\n",
                 phys, size, align);
 
-	return ofmem_claim_phys_( phys, size, align, 0, get_ram_size(), 1 );
+	return ofmem_claim_phys_( phys, size, align, 0, get_claim_phys_top(), 1 );
 }
 
 static ucell ofmem_claim_virt_( ucell virt, ucell size, ucell align,
@@ -600,7 +612,7 @@ phys_addr_t ofmem_retain( phys_addr_t phys, ucell size, ucell align )
                 " align=" FMT_ucellx "\n",
                 phys, size, align);
 
-	retain_phys = ofmem_claim_phys_( phys, size, align, 0, get_ram_size(), 1 /* reverse */ );
+	retain_phys = ofmem_claim_phys_( phys, size, align, 0, get_claim_phys_top(), 1 /* reverse */ );
 
 	/* Add to the retain_phys_range list */
 	retained->retain_phys_range[retained->numentries].next = NULL;
@@ -634,7 +646,7 @@ ucell ofmem_claim( ucell addr, ucell size, ucell align )
 	} else {
 		if( align < PAGE_SIZE )
 			align = PAGE_SIZE;
-		phys = ofmem_claim_phys_( -1, size, align, 0, get_ram_size(), 1 /* reverse */ );
+		phys = ofmem_claim_phys_( -1, size, align, 0, get_claim_phys_top(), 1 /* reverse */ );
 		virt = ofmem_claim_virt_( phys, size, 0, 0, 0, 0 );
 		if( phys == -1 || virt == -1 ) {
 			OFMEM_TRACE("ofmem_claim failed\n");

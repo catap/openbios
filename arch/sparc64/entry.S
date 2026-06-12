@@ -133,13 +133,19 @@ entry:
         or      %g3, %g4, %g1
         ! %g1 contains end of memory
 
+        mov	%g1, %g4
+        srlx	%g1, 32, %g5
+        brz	%g5, 1f
+         nop
+        setx	0x100000000, %g7, %g4
+1:
         setx    _end, %g7, %g3
         set     0x7ffff, %g2
         add     %g3, %g2, %g3
         andn    %g3, %g2, %g3
         setx    _data, %g7, %g2
         sub     %g3, %g2, %g2
-        sub	%g1, %g2, %g2			! %g2 = start of private memory
+        sub	%g4, %g2, %g2			! %g2 = start of private memory
         mov     %g2, %l0
 
 	! setup .data & .bss
