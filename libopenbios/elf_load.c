@@ -494,6 +494,8 @@ elf_init_program(void)
 	phdr = (Elf_phdr *)(base + ehdr->e_phoff);
 
 	for (i = 0; i < ehdr->e_phnum; i++) {
+		if (phdr[i].p_type != PT_LOAD)
+			continue;
 
 #if DEBUG
 		debug("filesz: %08lX memsz: %08lX p_offset: %08lX "
@@ -503,7 +505,7 @@ elf_init_program(void)
 #endif
 
 		size = MIN(phdr[i].p_filesz, phdr[i].p_memsz);
-		if (!size)
+		if (!phdr[i].p_memsz)
 			continue;
 #if !defined(CONFIG_SPARC32) && !defined(CONFIG_X86)
 		if( ofmem_claim( phdr[i].p_vaddr, phdr[i].p_memsz, 0 ) == -1 ) {
@@ -516,12 +518,16 @@ elf_init_program(void)
 		tmp = phdr[i].p_vaddr;
 		addr = (char *)tmp;
 
-		memcpy(addr, base + phdr[i].p_offset, size);
+		if (size)
+			memcpy(addr, base + phdr[i].p_offset, size);
+		if (phdr[i].p_memsz > size)
+			memset(addr + size, 0, phdr[i].p_memsz - size);
 
 		total_size += size;
 
 #ifdef CONFIG_PPC
-		flush_icache_range( addr, addr + size );
+		if (size)
+			flush_icache_range( addr, addr + size );
 #endif
 	}
 
