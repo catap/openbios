@@ -31,34 +31,44 @@ typedef unsigned short __u16;
 typedef __signed__ int __s32;
 typedef unsigned int __u32;
 
-/* Note that some shorts are not aligned, and must therefore
- * be declared as array of two bytes.
- */
+static inline __u16
+fat_get_le16(const __u8 *p)
+{
+	return (__u16)p[0] | ((__u16)p[1] << 8);
+}
+
+static inline __u32
+fat_get_le32(const __u8 *p)
+{
+	return (__u32)p[0] | ((__u32)p[1] << 8) |
+	       ((__u32)p[2] << 16) | ((__u32)p[3] << 24);
+}
+
 struct fat_bpb {
 	__s8	ignored[3];	/* Boot strap short or near jump */
 	__s8	system_id[8];	/* Name - can be used to special case
 				   partition manager volumes */
-	__u16	bytes_per_sect;	/* bytes per logical sector */
+	__u8	bytes_per_sect[2]; /* bytes per logical sector */
 	__u8	sects_per_clust;/* sectors/cluster */
-	__u16	reserved_sects;	/* reserved sectors */
+	__u8	reserved_sects[2]; /* reserved sectors */
 	__u8	num_fats;	/* number of FATs */
-	__u16	dir_entries;	/* root directory entries */
-	__u16	short_sectors;	/* number of sectors */
+	__u8	dir_entries[2]; /* root directory entries */
+	__u8	short_sectors[2]; /* number of sectors */
 	__u8	media;		/* media code (unused) */
-	__u16	fat_length;	/* sectors/FAT */
-	__u16	secs_track;	/* sectors per track */
-	__u16	heads;		/* number of heads */
-	__u32	hidden;		/* hidden sectors (unused) */
-	__u32	long_sectors;	/* number of sectors (if short_sectors == 0) */
+	__u8	fat_length[2]; /* sectors/FAT */
+	__u8	secs_track[2]; /* sectors per track */
+	__u8	heads[2];	/* number of heads */
+	__u8	hidden[4];	/* hidden sectors (unused) */
+	__u8	long_sectors[4]; /* number of sectors (if short_sectors == 0) */
 
 	/* The following fields are only used by FAT32 */
-	__u32	fat32_length;	/* sectors/FAT */
-	__u16	flags;		/* bit 8: fat mirroring, low 4: active fat */
-	__u16	version;	/* major, minor filesystem version */
-	__u32	root_cluster;	/* first cluster in root directory */
-	__u16	info_sector;	/* filesystem info sector */
-	__u16	backup_boot;	/* backup boot sector */
-	__u16	reserved2[6];	/* Unused */
+	__u8	fat32_length[4]; /* sectors/FAT */
+	__u8	flags[2];	/* bit 8: fat mirroring, low 4: active fat */
+	__u8	version[2];	/* major, minor filesystem version */
+	__u8	root_cluster[4]; /* first cluster in root directory */
+	__u8	info_sector[2]; /* filesystem info sector */
+	__u8	backup_boot[2]; /* backup boot sector */
+	__u8	reserved2[12]; /* Unused */
 } __attribute__ ((packed));
 
 /*
@@ -89,9 +99,10 @@ struct fat_bpb {
     && ((*((unsigned char *) entry)) != 0xE5) \
     && !(FAT_DIRENTRY_ATTRIB(entry) & FAT_ATTRIB_NOT_OK_MASK) )
 #define FAT_DIRENTRY_FIRST_CLUSTER(entry) \
-  ((*((unsigned short *) (entry+26)))+(*((unsigned short *) (entry+20)) << 16))
+  (fat_get_le16((const __u8 *) (entry) + 26) \
+   + ((unsigned long)fat_get_le16((const __u8 *) (entry) + 20) << 16))
 #define FAT_DIRENTRY_FILELENGTH(entry) \
-  (*((unsigned long *) (entry+28)))
+  fat_get_le32((const __u8 *) (entry) + 28)
 
 #define FAT_LONGDIR_ID(entry) \
   (*((unsigned char *) (entry)))

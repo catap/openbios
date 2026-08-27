@@ -59,6 +59,10 @@ int
 fat_mount (void)
 {
   struct fat_bpb bpb;
+  __u8 first_fat_data[4];
+  __u16 bytes_per_sect, reserved_sects, dir_entries;
+  __u16 short_sectors, fat_length, flags;
+  __u32 long_sectors, fat32_length, root_cluster;
   __u32 magic, first_fat;
 
   /* Check partition type for harddisk */
@@ -71,28 +75,36 @@ fat_mount (void)
   if (! devread (0, 0, sizeof (bpb), (char *) &bpb))
     return 0;
 
-  /* Check if the number of sectors per cluster is zero here, to avoid
-     zero division.  */
-  if (bpb.sects_per_clust == 0)
+  bytes_per_sect = fat_get_le16 (bpb.bytes_per_sect);
+  reserved_sects = fat_get_le16 (bpb.reserved_sects);
+  dir_entries = fat_get_le16 (bpb.dir_entries);
+  short_sectors = fat_get_le16 (bpb.short_sectors);
+  fat_length = fat_get_le16 (bpb.fat_length);
+  long_sectors = fat_get_le32 (bpb.long_sectors);
+  fat32_length = fat_get_le32 (bpb.fat32_length);
+  flags = fat_get_le16 (bpb.flags);
+  root_cluster = fat_get_le32 (bpb.root_cluster);
+
+  if (bytes_per_sect != SECTOR_SIZE
+      || bpb.sects_per_clust == 0
+      || (bpb.sects_per_clust & (bpb.sects_per_clust - 1)))
     return 0;
 
-  FAT_SUPER->sectsize_bits = log2 (bpb.bytes_per_sect);
+  FAT_SUPER->sectsize_bits = log2 (bytes_per_sect);
   FAT_SUPER->clustsize_bits
     = FAT_SUPER->sectsize_bits + log2 (bpb.sects_per_clust);
 
   /* Fill in info about super block */
-  FAT_SUPER->num_sectors = bpb.short_sectors
-    ? bpb.short_sectors : bpb.long_sectors;
+  FAT_SUPER->num_sectors = short_sectors ? short_sectors : long_sectors;
 
   /* FAT offset and length */
-  FAT_SUPER->fat_offset = bpb.reserved_sects;
-  FAT_SUPER->fat_length =
-    bpb.fat_length ? bpb.fat_length : bpb.fat32_length;
+  FAT_SUPER->fat_offset = reserved_sects;
+  FAT_SUPER->fat_length = fat_length ? fat_length : fat32_length;
 
   /* Rootdir offset and length for FAT12/16 */
   FAT_SUPER->root_offset =
     FAT_SUPER->fat_offset + bpb.num_fats * FAT_SUPER->fat_length;
-  FAT_SUPER->root_max = FAT_DIRENTRY_LENGTH * bpb.dir_entries;
+  FAT_SUPER->root_max = FAT_DIRENTRY_LENGTH * dir_entries;
 
   /* Data offset and number of clusters */
   FAT_SUPER->data_offset =
@@ -103,23 +115,23 @@ fat_mount (void)
 	 / bpb.sects_per_clust);
   FAT_SUPER->sects_per_clust = bpb.sects_per_clust;
 
-  if (!bpb.fat_length)
+  if (!fat_length)
     {
       /* This is a FAT32 */
-      if (bpb.dir_entries)
+      if (dir_entries)
  	return 0;
 
-      if (bpb.flags & 0x0080)
+      if (flags & 0x0080)
 	{
 	  /* FAT mirroring is disabled, get active FAT */
-	  int active_fat = bpb.flags & 0x000f;
+	  int active_fat = flags & 0x000f;
 	  if (active_fat >= bpb.num_fats)
 	    return 0;
 	  FAT_SUPER->fat_offset += active_fat * FAT_SUPER->fat_length;
 	}
 
       FAT_SUPER->fat_size = 8;
-      FAT_SUPER->root_cluster = bpb.root_cluster;
+      FAT_SUPER->root_cluster = root_cluster;
 
       /* Yes the following is correct.  FAT32 should be called FAT28 :) */
       FAT_SUPER->clust_eof_marker = 0xffffff8;
@@ -145,11 +157,7 @@ fat_mount (void)
 
   /* Now do some sanity checks */
 
-  if (bpb.bytes_per_sect != (1 << FAT_SUPER->sectsize_bits)
-      || bpb.bytes_per_sect != SECTOR_SIZE
-      || bpb.sects_per_clust != (1 << (FAT_SUPER->clustsize_bits
- 				       - FAT_SUPER->sectsize_bits))
-      || FAT_SUPER->num_clust <= 2
+  if (FAT_SUPER->num_clust <= 2
       || (FAT_SUPER->fat_size * FAT_SUPER->num_clust / (2 * SECTOR_SIZE)
  	  > FAT_SUPER->fat_length))
     return 0;
@@ -157,8 +165,10 @@ fat_mount (void)
   /* kbs: Media check on first FAT entry [ported from PUPA] */
 
   if (!devread(FAT_SUPER->fat_offset, 0,
-               sizeof(first_fat), (char *)&first_fat))
+               sizeof(first_fat_data), (char *)first_fat_data))
     return 0;
+
+  first_fat = fat_get_le32 (first_fat_data);
 
   if (FAT_SUPER->fat_size == 8)
     {
@@ -221,6 +231,7 @@ fat_read (char *buf, int len)
 	    FAT_SUPER->current_cluster * FAT_SUPER->fat_size;
 	  int next_cluster;
 	  int cached_pos = (fat_entry - FAT_SUPER->cached_fat);
+	  const __u8 *fat_ptr;
 
 	  if (cached_pos < 0 ||
 	      (cached_pos + FAT_SUPER->fat_size) > 2*FAT_CACHE_SIZE)
@@ -232,7 +243,12 @@ fat_read (char *buf, int len)
 	      if (!devread (sector, 0, FAT_CACHE_SIZE, (char*) FAT_BUF))
 		return 0;
 	    }
-	  next_cluster = * (unsigned long *) (FAT_BUF + (cached_pos >> 1));
+	  fat_ptr = (__u8 *) FAT_BUF + (cached_pos >> 1);
+	  if (FAT_SUPER->fat_size == 8)
+	    next_cluster = fat_get_le32 (fat_ptr);
+	  else
+	    next_cluster = fat_get_le16 (fat_ptr);
+
 	  if (FAT_SUPER->fat_size == 3)
 	    {
 	      if (cached_pos & 1)
