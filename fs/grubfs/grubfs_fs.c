@@ -174,6 +174,7 @@ grubfs_files_open( grubfs_info_t *mi )
 	int fd, i;
 	char *path = my_args_copy();
 	char *s;
+	grubfs_t *gfs;
 
 	fd = open_ih( my_parent() );
 	if ( fd == -1 ) {
@@ -181,21 +182,31 @@ grubfs_files_open( grubfs_info_t *mi )
 		RET( 0 );
 	}
 
-	mi->gfs = &dummy_fs;
+	gfs = malloc(sizeof(grubfs_t));
+	if (!gfs) {
+		close_io(fd);
+		free(path);
+		RET( 0 );
+	}
+
+	gfs->fsys = NULL;
+	gfs->fd = NULL;
+	gfs->dev_fd = fd;
+	gfs->offset = 0;
+	mi->gfs = gfs;
+	curfs = gfs;
 
 	for (i = 0; i < sizeof(fsys_table)/sizeof(fsys_table[0]); i++) {
 #ifdef CONFIG_DEBUG_FS
 		printk("Trying %s\n", fsys_table[i].name);
 #endif
+		errnum = ERR_NONE;
 		if (fsys_table[i].mount_func()) {
 			const fsys_entry_t *fsys = &fsys_table[i];
 #ifdef CONFIG_DEBUG_FS
 			printk("Mounted %s\n", fsys->name);
 #endif
-			mi->gfs = malloc(sizeof(grubfs_t));
-			mi->gfs->fsys = fsys;
-			mi->gfs->dev_fd = fd;
-			mi->gfs->offset = 0;
+			gfs->fsys = fsys;
 
 			s = path;
 			while (*s) {
@@ -205,16 +216,20 @@ grubfs_files_open( grubfs_info_t *mi )
 #ifdef CONFIG_DEBUG_FS
 			printk("Path=%s\n",path);
 #endif
-			if (!mi->gfs->fsys->dir_func((char *) path)) {
+			errnum = ERR_NONE;
+			if (!gfs->fsys->dir_func((char *) path)) {
 				forth_printf("File not found\n");
-				RET( 0 );
+				goto fail;
 			}
 
-			mi->gfs->fd = malloc(sizeof(grubfile_t));
-			mi->gfs->fd->pos = filepos;
-			mi->gfs->fd->len = filemax;
-			mi->gfs->fd->path = strdup(path);
+			gfs->fd = malloc(sizeof(grubfile_t));
+			if (!gfs->fd)
+				goto fail;
+			gfs->fd->pos = filepos;
+			gfs->fd->len = filemax;
+			gfs->fd->path = strdup(path);
 
+			free(path);
 			RET( -1 );
 		}
 	}
@@ -222,6 +237,17 @@ grubfs_files_open( grubfs_info_t *mi )
 	printk("Unknown filesystem type\n");
 #endif
 
+fail:
+	if (gfs->fsys && gfs->fsys->close_func)
+		gfs->fsys->close_func();
+	if (gfs->fd)
+		free(gfs->fd);
+	close_io(fd);
+	free(gfs);
+	mi->gfs = NULL;
+	curfs = &dummy_fs;
+	dummy_fs.dev_fd = -1;
+	free(path);
 	RET( 0 );
 }
 
@@ -229,11 +255,28 @@ grubfs_files_open( grubfs_info_t *mi )
 static void
 grubfs_files_close( grubfs_info_t *mi )
 {
-	grubfile_t *gf = mi->gfs->fd;
+	grubfs_t *gfs = mi->gfs;
+	grubfile_t *gf;
 
-	if (gf->path)
-		free((void *)(gf->path));
-	free(gf);
+	if (!gfs)
+		return;
+
+	curfs = gfs;
+	if (gfs->fsys->close_func)
+		gfs->fsys->close_func();
+
+	gf = gfs->fd;
+
+	if (gf) {
+		if (gf->path)
+			free((void *)(gf->path));
+		free(gf);
+	}
+	close_io(gfs->dev_fd);
+	free(gfs);
+	mi->gfs = NULL;
+	curfs = &dummy_fs;
+	dummy_fs.dev_fd = -1;
 
 	filepos = 0;
 	filemax = 0;
@@ -249,8 +292,10 @@ grubfs_files_read( grubfs_info_t *mi )
 	grubfile_t *file = mi->gfs->fd;
         int ret;
 
+	curfs = mi->gfs;
 	filepos = file->pos;
 	filemax = file->len;
+	errnum = ERR_NONE;
 
 	if (count > filemax - filepos)
 		count = filemax - filepos;
@@ -305,6 +350,10 @@ grubfs_files_load( grubfs_info_t *mi )
 	int count, ret;
 
 	grubfile_t *file = mi->gfs->fd;
+	curfs = mi->gfs;
+	filepos = 0;
+	filemax = file->len;
+	errnum = ERR_NONE;
 	count = file->len;
 
 	ret = mi->gfs->fsys->read_func(buf, count);
@@ -339,30 +388,36 @@ grubfs_files_probe( grubfs_info_t *dummy )
 {
 	ihandle_t ih = POP_ih();
 	long long offs = DPOP();
-	int i;
+	int fd, i, ret = 0;
 
-	curfs->dev_fd = open_ih(ih);
-        if (curfs->dev_fd == -1) {
-                RET( -1 );
-        }
-	curfs->offset = offs;
+	fd = open_ih(ih);
+	if (fd == -1)
+		RET( 0 );
+
+	curfs = &dummy_fs;
+	dummy_fs.dev_fd = fd;
+	dummy_fs.offset = offs;
 
 	for (i = 0; i < sizeof(fsys_table)/sizeof(fsys_table[0]); i++) {
 #ifdef CONFIG_DEBUG_FS
 		printk("Probing for %s\n", fsys_table[i].name);
 #endif
+		errnum = ERR_NONE;
 		if (fsys_table[i].mount_func()) {
-			RET( -1 );
+			ret = -1;
+			break;
 		}
 	}
 
 #ifdef CONFIG_DEBUG_FS
-	printk("Unknown filesystem type\n");
+	if (!ret)
+		printk("Unknown filesystem type\n");
 #endif
 
-	close_io(curfs->dev_fd);
+	close_io(fd);
+	dummy_fs.dev_fd = -1;
 
-	RET ( 0 );
+	RET ( ret );
 }
 
 /* static method, ( pathstr len ihandle -- ) */
