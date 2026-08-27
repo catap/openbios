@@ -335,11 +335,7 @@ grubfs_files_seek( grubfs_info_t *mi )
 		newpos = file->len;
 
 	file->pos = newpos;
-
-	if (newpos)
-		RET( -1 );
-	else
-		RET( 0 );
+	RET( 0 );
 }
 
 /* ( addr -- size ) */
