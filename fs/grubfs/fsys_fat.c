@@ -263,7 +263,12 @@ fat_read (char *buf, int len)
 
       disk_read_func = disk_read_hook;
 
-      devread(sector, offset, size, buf);
+      if (!devread(sector, offset, size, buf))
+	{
+	  disk_read_func = NULL;
+	  errnum = ERR_READ;
+	  return 0;
+	}
 
       disk_read_func = NULL;
 
