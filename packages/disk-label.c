@@ -75,6 +75,14 @@ dlabel_open( dlabel_info_t *di )
 	di->parent_tell_xt = find_parent_method("tell");
 	di->parent_read_xt = find_parent_method("read");
 
+	/* Partition 0 means the whole disk in the PowerPC bindings. */
+#ifdef CONFIG_PPC
+	if (path && strcmp(path, "0") == 0) {
+		success = 1;
+		goto out;
+	}
+#endif
+
 	/* If arguments have been passed, determine the partition/filesystem type */
 	if (path && strlen(path)) {
 
